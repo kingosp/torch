@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Torch Settings</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body class="settings-body">
+    <div class="window">
+      <header class="titlebar" data-tauri-drag-region>
+        <div class="brand" data-tauri-drag-region>
+          <span class="flame" aria-hidden="true"></span>
+          <span class="brand-name" data-tauri-drag-region>Torch</span>
+          <span class="brand-status" id="status-pill">Active</span>
+        </div>
+        <button class="icon-button" id="close-window" title="Close" aria-label="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8" />
+          </svg>
+        </button>
+      </header>
+
+      <main class="content">
+        <section class="panel">
+          <h2>General</h2>
+
+          <div class="row">
+            <div class="row-text">
+              <span class="row-title">Enable Torch</span>
+              <span class="row-sub">Pause the keyboard hook without quitting</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="enabled" />
+              <span class="track"><span class="thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="row">
+            <div class="row-text">
+              <span class="row-title">Start with Windows</span>
+              <span class="row-sub">Registers Torch under HKCU\...\CurrentVersion\Run</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="startup" />
+              <span class="track"><span class="thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="row column">
+            <div class="row-text">
+              <span class="row-title">Hold time <em id="hold-time-value">2.00s</em></span>
+              <span class="row-sub">How long a trigger key must be held before the wheel opens</span>
+            </div>
+            <input type="range" id="hold-time" min="1" max="3" step="0.05" />
+          </div>
+
+          <div class="row">
+            <div class="row-text">
+              <span class="row-title">Popup position</span>
+              <span class="row-sub">Where the radial selector appears</span>
+            </div>
+            <div class="segmented" id="popup-anchor">
+              <button type="button" data-value="cursor" class="active">Cursor</button>
+              <button type="button" data-value="center">Screen center</button>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="row-text">
+              <span class="row-title">Instant pass-through</span>
+              <span class="row-sub">
+                Send trigger keys the moment they go down instead of on release
+              </span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="instant" />
+              <span class="track"><span class="thumb"></span></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Key mappings</h2>
+            <button class="ghost-button" id="add-mapping">+ Add trigger</button>
+          </div>
+          <p class="panel-hint">
+            Hold a trigger key to open its wheel. Arrow keys move the highlight, releasing the
+            trigger commits it.
+          </p>
+          <div class="mappings" id="mappings"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Appearance</h2>
+          <div class="row">
+            <div class="row-text">
+              <span class="row-title">Theme</span>
+              <span class="row-sub">Auto follows the Windows light / dark setting</span>
+            </div>
+            <div class="segmented" id="theme">
+              <button type="button" data-value="auto">Auto</button>
+              <button type="button" data-value="dark">Dark</button>
+              <button type="button" data-value="light">Light</button>
+              <button type="button" data-value="custom">Custom</button>
+            </div>
+          </div>
+
+          <div class="theme-grid">
+            <label class="color">
+              <span>Accent</span>
+              <input type="color" id="accent" />
+            </label>
+            <label class="color" data-custom-only>
+              <span>Background</span>
+              <input type="color" id="bg" />
+            </label>
+            <label class="color" data-custom-only>
+              <span>Text</span>
+              <input type="color" id="text" />
+            </label>
+            <label class="color" data-custom-only>
+              <span>Highlight</span>
+              <input type="color" id="highlight" />
+            </label>
+          </div>
+
+          <div class="row column">
+            <div class="row-text">
+              <span class="row-title">Blur intensity <em id="blur-value">20px</em></span>
+              <span class="row-sub">Backdrop blur behind the glass panel</span>
+            </div>
+            <input type="range" id="blur" min="0" max="60" step="1" />
+          </div>
+
+          <div class="preview">
+            <span class="preview-label">Live preview</span>
+            <div class="preview-stage">
+              <div class="stage" id="stage">
+                <div class="glass" id="glass">
+                  <svg class="orbit" viewBox="0 0 460 460" aria-hidden="true">
+                    <circle class="orbit-track" cx="230" cy="230" r="132" />
+                    <circle class="orbit-progress" id="orbit-progress" cx="230" cy="230" r="132" />
+                  </svg>
+                  <div class="needle" id="needle"></div>
+                  <div class="core" id="core">
+                    <span class="core-key" id="core-key">S</span>
+                    <span class="core-hint" id="core-hint">release to pick</span>
+                  </div>
+                  <div class="items" id="items"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <footer class="footer">
+          <span id="config-path">Offline config: config.json</span>
+          <button class="danger-button" id="quit">Quit Torch</button>
+        </footer>
+      </main>
+    </div>
+
+    <div class="capture-overlay" id="capture" hidden>
+      <div class="capture-card">
+        <span class="capture-title">Press any key</span>
+        <span class="capture-sub" id="capture-sub">It becomes the trigger key</span>
+        <button class="ghost-button" id="capture-cancel">Cancel</button>
+      </div>
+    </div>
+
+    <script type="module" src="settings.js"></script>
+  </body>
+</html>
