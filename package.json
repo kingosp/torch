@@ -1,0 +1,15 @@
+{
+  "name": "torch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Torch - hold-trigger radial key remapper for Windows",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icons": "node tools/make-icons.mjs && tauri icon src-tauri/icons/source.png -o src-tauri/icons",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.1.0"
+  }
+}

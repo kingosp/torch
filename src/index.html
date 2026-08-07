@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Torch</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body class="popup-body">
+    <div class="stage" id="stage" aria-hidden="true">
+      <div class="glass" id="glass">
+        <svg class="orbit" viewBox="0 0 460 460" aria-hidden="true">
+          <circle class="orbit-track" cx="230" cy="230" r="132" />
+          <circle class="orbit-progress" id="orbit-progress" cx="230" cy="230" r="132" />
+        </svg>
+        <div class="needle" id="needle"></div>
+        <div class="core" id="core">
+          <span class="core-key" id="core-key">S</span>
+          <span class="core-hint" id="core-hint">release to pick</span>
+        </div>
+        <div class="items" id="items"></div>
+      </div>
+    </div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
