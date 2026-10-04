@@ -64,15 +64,16 @@ pub struct Config {
     /// already committed by the time the radial selector opens.
     pub instant_passthrough: bool,
     pub custom_theme: CustomTheme,
+    /// Instant source chord -> replacement key, e.g. `ctrl+alt+q` -> `enter`.
+    #[serde(default)]
+    pub remaps: BTreeMap<String, String>,
     /// Trigger key -> keys offered by the radial selector.
     pub mapping: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let mut mapping = BTreeMap::new();
-        mapping.insert("s".to_string(), vec!["w".into(), "x".into(), "e".into()]);
-        mapping.insert("d".to_string(), vec!["k".into(), "l".into()]);
+        let mapping = BTreeMap::new();
         Self {
             enabled: true,
             startup: false,
@@ -81,6 +82,7 @@ impl Default for Config {
             popup_anchor: PopupAnchor::Cursor,
             instant_passthrough: false,
             custom_theme: CustomTheme::default(),
+            remaps: BTreeMap::new(),
             mapping,
         }
     }
@@ -94,6 +96,9 @@ impl Config {
         self.mapping.retain(|trigger, targets| {
             targets.retain(|target| !target.trim().is_empty());
             !trigger.trim().is_empty() && !targets.is_empty()
+        });
+        self.remaps.retain(|source, target| {
+            !source.trim().is_empty() && !target.trim().is_empty()
         });
     }
 
@@ -132,3 +137,4 @@ pub fn save(path: &Path, config: &Config) -> Result<(), String> {
     let raw = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
     fs::write(path, raw).map_err(|e| e.to_string())
 }
+

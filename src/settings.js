@@ -1,306 +1,186 @@
-/** Settings window: edits config.json through the Rust backend. */
-
-import { Radial, prettyKey } from "./radial.js";
-import { applyTheme, watchSystemTheme } from "./theme.js";
-
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const { getCurrentWindow } = window.__TAURI__.window;
-
 const $ = (id) => document.getElementById(id);
 
-const preview = new Radial(document);
-let config = null;
-let saveTimer = null;
-let capture = null;
+const MODIFIERS = [
+  { id: "ctrl", label: "Ctrl" },
+  { id: "alt", label: "Alt" },
+  { id: "shift", label: "Shift" },
+  { id: "win", label: "Win" },
+];
+const KEY_ROWS = [
+  ["esc", ...Array.from({ length: 12 }, (_, i) => `f${i + 1}`)],
+  ["`", ..."1234567890-=".split(""), "backspace"],
+  ["tab", ..."qwertyuiop[]\\".split("")],
+  ["capslock", ..."asdfghjkl;'".split(""), "enter"],
+  ["shift", ..."zxcvbnm,./".split(""), "up", "shift"],
+  ["ctrl", "win", "alt", "space", "alt", "win", "menu", "left", "down", "right"],
+  ["insert", "home", "pageup", "delete", "end", "pagedown", "numlock", "divide", "multiply", "subtract"],
+  ["numpad7", "numpad8", "numpad9", "add", "numpad4", "numpad5", "numpad6", "numpad1", "numpad2", "numpad3", "numpad0", "decimal"],
+];
+const DISPLAY = { esc: "Esc", backspace: "⌫", tab: "Tab", capslock: "Caps", enter: "Enter", shift: "Shift", ctrl: "Ctrl", alt: "Alt", win: "Win", menu: "Menu", space: "Space", up: "↑", down: "↓", left: "←", right: "→", insert: "Ins", home: "Home", pageup: "PgUp", delete: "Del", end: "End", pagedown: "PgDn", numlock: "Num", divide: "÷", multiply: "×", subtract: "−", add: "+", decimal: ".", "`": "`" };
+let config;
+let selectedModifiers = new Set(["ctrl", "alt"]);
+let sourceKey = null;
+let targetKey = null;
+let keyboardChoice = "source";
+let saveChain = Promise.resolve();
+let saveTimer;
+let configRevision = 0;
+let savedRevision = 0;
 
-// --- key capture ------------------------------------------------------
-
-const CODE_ALIASES = {
-  Escape: "esc",
-  Enter: "enter",
-  NumpadEnter: "enter",
-  Space: "space",
-  Tab: "tab",
-  Backspace: "backspace",
-  Delete: "delete",
-  Insert: "insert",
-  Home: "home",
-  End: "end",
-  PageUp: "pageup",
-  PageDown: "pagedown",
-  ArrowUp: "up",
-  ArrowDown: "down",
-  ArrowLeft: "left",
-  ArrowRight: "right",
-  CapsLock: "capslock",
-  Minus: "-",
-  Equal: "=",
-  BracketLeft: "[",
-  BracketRight: "]",
-  Backslash: "\\",
-  Semicolon: ";",
-  Quote: "'",
-  Backquote: "`",
-  Comma: ",",
-  Period: ".",
-  Slash: "/",
-  NumpadAdd: "add",
-  NumpadSubtract: "subtract",
-  NumpadMultiply: "multiply",
-  NumpadDivide: "divide",
-  NumpadDecimal: "decimal",
-};
-
-/** Layout independent key name that matches the Rust `vk_from_name` table. */
-function keyFromEvent(event) {
-  const code = event.code;
-  if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
-  if (/^Digit\d$/.test(code)) return code.slice(5);
-  if (/^Numpad\d$/.test(code)) return `numpad${code.slice(6)}`;
-  if (/^F\d{1,2}$/.test(code)) return code.toLowerCase();
-  if (CODE_ALIASES[code]) return CODE_ALIASES[code];
-  if (event.key && event.key.length === 1) return event.key.toLowerCase();
-  return null;
-}
-
-function captureKey(subtitle) {
-  $("capture-sub").textContent = subtitle;
-  $("capture").hidden = false;
-  return new Promise((resolve) => {
-    capture = (value) => {
-      capture = null;
-      $("capture").hidden = true;
-      resolve(value);
-    };
+function label(key) { return DISPLAY[key] ?? key.toUpperCase(); }
+function renderModifiers() {
+  const host = $("modifiers");
+  host.textContent = "";
+  MODIFIERS.forEach(({ id, label: name }) => {
+    const button = document.createElement("button");
+    button.className = `modifier-button${selectedModifiers.has(id) ? " selected" : ""}`;
+    button.type = "button";
+    button.textContent = name;
+    button.setAttribute("aria-pressed", String(selectedModifiers.has(id)));
+    button.addEventListener("click", () => {
+      selectedModifiers.has(id) ? selectedModifiers.delete(id) : selectedModifiers.add(id);
+      renderModifiers();
+      renderBuilder();
+    });
+    host.append(button);
   });
 }
 
-window.addEventListener(
-  "keydown",
-  (event) => {
-    if (!capture) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.code === "Escape") return capture(null);
-    const key = keyFromEvent(event);
-    if (key) capture(key);
-  },
-  true
-);
-
-$("capture-cancel").addEventListener("click", () => capture?.(null));
-
-// --- persistence ------------------------------------------------------
-
-function save({ rerender = false } = {}) {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    const saved = await invoke("set_config", { config });
-    config = saved;
-    if (rerender) renderMappings();
-    renderPreview();
-  }, 90);
-}
-
-function patch(partial, options) {
-  config = { ...config, ...partial };
-  applyTheme(config);
-  save(options);
-}
-
-// --- rendering --------------------------------------------------------
-
-function renderGeneral() {
-  $("enabled").checked = config.enabled;
-  $("startup").checked = config.startup;
-  $("hold-time").value = config.hold_time;
-  $("hold-time-value").textContent = `${Number(config.hold_time).toFixed(2)}s`;
-  $("instant").checked = config.instant_passthrough;
-  $("blur").value = config.custom_theme.blur;
-  $("blur-value").textContent = `${config.custom_theme.blur}px`;
-  $("accent").value = config.custom_theme.accent;
-  $("bg").value = config.custom_theme.bg;
-  $("text").value = config.custom_theme.text;
-  $("highlight").value = config.custom_theme.highlight;
-
-  const pill = $("status-pill");
-  pill.textContent = config.enabled ? "Active" : "Paused";
-  pill.classList.toggle("off", !config.enabled);
-
-  setSegment("theme", config.theme);
-  setSegment("popup-anchor", config.popup_anchor);
-  document
-    .querySelectorAll("[data-custom-only]")
-    .forEach((node) => node.classList.toggle("disabled", config.theme !== "custom"));
-}
-
-function setSegment(id, value) {
-  $(id)
-    .querySelectorAll("button")
-    .forEach((button) => button.classList.toggle("active", button.dataset.value === value));
-}
-
-function renderMappings() {
-  const host = $("mappings");
+function renderKeyboard() {
+  const host = $("keyboard");
   host.textContent = "";
-  const entries = Object.entries(config.mapping);
+  KEY_ROWS.forEach((row) => {
+    const line = document.createElement("div");
+    line.className = "keyboard-row";
+    row.forEach((key) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `keyboard-key${key === "space" ? " space-key" : ""}${key === sourceKey ? " source-key" : ""}${key === targetKey ? " target-key" : ""}`;
+      button.textContent = label(key);
+      button.title = `Select ${label(key)} as ${keyboardChoice === "source" ? "working key" : "replacement key"}`;
+      button.addEventListener("click", () => {
+        if (["ctrl", "alt", "shift", "win"].includes(key)) {
+          const name = key === "win" ? "win" : key;
+          selectedModifiers.has(name) ? selectedModifiers.delete(name) : selectedModifiers.add(name);
+          renderModifiers();
+        } else if (keyboardChoice === "source") {
+          sourceKey = key;
+          keyboardChoice = "target";
+        } else {
+          targetKey = key;
+          keyboardChoice = "source";
+        }
+        renderKeyboard();
+        renderBuilder();
+      });
+      line.append(button);
+    });
+    host.append(line);
+  });
+}
+
+function renderBuilder() {
+  $("source-picked").textContent = sourceKey ? label(sourceKey) : "Choose a key below";
+  $("target-picked").textContent = targetKey ? label(targetKey) : "Choose a key below";
+  $("keyboard-mode").textContent = keyboardChoice === "source" ? "Select the working key" : "Now select the replacement key";
+  $("add-remap").disabled = !sourceKey || !targetKey || selectedModifiers.size === 0;
+}
+
+function renderRemaps() {
+  const host = $("remaps");
+  const entries = Object.entries(config.remaps ?? {});
+  host.textContent = "";
+  $("remap-count").textContent = String(entries.length);
   if (!entries.length) {
     const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "No mappings yet. Add a trigger to get started.";
+    empty.className = "empty-remaps";
+    empty.textContent = "No remaps yet. Build one above to rescue a key.";
     host.append(empty);
     return;
   }
-
-  entries.forEach(([trigger, targets], row) => {
-    const mapping = document.createElement("div");
-    mapping.className = "mapping";
-    mapping.style.animationDelay = `${row * 30}ms`;
-
-    const keycap = document.createElement("button");
-    keycap.className = "keycap";
-    keycap.textContent = prettyKey(trigger);
-    keycap.title = "Change trigger key";
-    keycap.addEventListener("click", async () => {
-      const next = await captureKey("It replaces the trigger key");
-      if (!next || next === trigger) return;
-      const updated = {};
-      for (const [key, value] of Object.entries(config.mapping)) {
-        updated[key === trigger ? next : key] = value;
-      }
-      patch({ mapping: updated }, { rerender: true });
-      renderMappings();
-    });
-
-    const arrow = document.createElement("span");
-    arrow.className = "arrow";
-    arrow.textContent = "\u2192";
-
-    const list = document.createElement("div");
-    list.className = "targets";
-    targets.forEach((target, index) => {
-      const chip = document.createElement("span");
-      chip.className = "chip";
-      chip.append(document.createTextNode(prettyKey(target)));
-      const remove = document.createElement("button");
-      remove.textContent = "\u00d7";
-      remove.title = "Remove";
-      remove.addEventListener("click", () => {
-        const next = targets.filter((_, i) => i !== index);
-        const mappingCopy = { ...config.mapping };
-        if (next.length) mappingCopy[trigger] = next;
-        else delete mappingCopy[trigger];
-        patch({ mapping: mappingCopy }, { rerender: true });
-        renderMappings();
-      });
-      chip.append(remove);
-      list.append(chip);
-    });
-
-    const add = document.createElement("button");
-    add.className = "chip add";
-    add.textContent = "+ key";
-    add.addEventListener("click", async () => {
-      const key = await captureKey(`It is added to the ${prettyKey(trigger)} wheel`);
-      if (!key || targets.includes(key)) return;
-      patch(
-        { mapping: { ...config.mapping, [trigger]: [...targets, key] } },
-        { rerender: true }
-      );
-      renderMappings();
-    });
-    list.append(add);
-
-    const remove = document.createElement("button");
-    remove.className = "ghost-button remove";
-    remove.textContent = "Delete";
-    remove.addEventListener("click", () => {
-      const mappingCopy = { ...config.mapping };
-      delete mappingCopy[trigger];
-      patch({ mapping: mappingCopy }, { rerender: true });
-      renderMappings();
-    });
-
-    mapping.append(keycap, arrow, list, remove);
-    host.append(mapping);
+  entries.forEach(([source, target]) => {
+    const row = document.createElement("div");
+    row.className = "remap-row";
+    const from = document.createElement("div");
+    from.className = "remap-source";
+    source.split("+").forEach((key) => { const cap = document.createElement("kbd"); cap.textContent = label(key); from.append(cap); });
+    const arrow = document.createElement("span"); arrow.className = "remap-arrow"; arrow.textContent = "→";
+    const to = document.createElement("kbd"); to.className = "remap-target"; to.textContent = label(target);
+    const remove = document.createElement("button"); remove.className = "remove-remap"; remove.type = "button"; remove.textContent = "Remove";
+    remove.addEventListener("click", () => { const remaps = { ...config.remaps }; delete remaps[source]; patch({ remaps }); });
+    row.append(from, arrow, to, remove);
+    host.append(row);
   });
 }
 
-function renderPreview() {
-  const [trigger, items] = Object.entries(config.mapping)[0] ?? ["s", ["w", "x", "e"]];
-  preview.show({ trigger, items, index: 0 });
+function renderStatus() {
+  const pill = $("status-pill");
+  pill.textContent = config.enabled ? "Active" : "Paused";
+  pill.classList.toggle("off", !config.enabled);
+  $("enabled").checked = config.enabled;
+  $("startup").checked = config.startup;
 }
 
-function renderAll() {
-  applyTheme(config);
-  renderGeneral();
-  renderMappings();
-  renderPreview();
+function persist() {
+  clearTimeout(saveTimer);
+  const revision = ++configRevision;
+  $("save-status").textContent = "Saving…";
+  saveTimer = setTimeout(() => {
+    const snapshot = structuredClone(config);
+    saveChain = saveChain.then(() => invoke("set_config", { config: snapshot })).then((saved) => {
+      if (revision === configRevision) {
+        config = saved;
+        savedRevision = revision;
+        $("save-status").textContent = "Saved to this device";
+        renderStatus();
+      }
+    }).catch((error) => { $("save-status").textContent = `Could not save: ${error}`; });
+  }, 100);
 }
 
-// --- wiring -----------------------------------------------------------
-
-$("enabled").addEventListener("change", (e) => patch({ enabled: e.target.checked }));
-$("startup").addEventListener("change", (e) => patch({ startup: e.target.checked }));
-$("instant").addEventListener("change", (e) => patch({ instant_passthrough: e.target.checked }));
-
-$("hold-time").addEventListener("input", (e) => {
-  const value = Number(e.target.value);
-  $("hold-time-value").textContent = `${value.toFixed(2)}s`;
-  patch({ hold_time: value });
-});
-
-$("blur").addEventListener("input", (e) => {
-  const blur = Number(e.target.value);
-  $("blur-value").textContent = `${blur}px`;
-  patch({ custom_theme: { ...config.custom_theme, blur } });
-});
-
-for (const id of ["accent", "bg", "text", "highlight"]) {
-  $(id).addEventListener("input", (e) =>
-    patch({ custom_theme: { ...config.custom_theme, [id]: e.target.value } })
-  );
+function patch(partial) {
+  config = { ...config, ...partial };
+  renderRemaps();
+  renderStatus();
+  persist();
 }
 
-$("theme").addEventListener("click", (event) => {
-  const button = event.target.closest("button");
-  if (!button) return;
-  patch({ theme: button.dataset.value });
-  renderGeneral();
+$("add-remap").addEventListener("click", () => {
+  const modifiers = MODIFIERS.filter(({ id }) => selectedModifiers.has(id)).map(({ id }) => id);
+  const source = [...modifiers, sourceKey].join("+");
+  if (config.remaps[source]) {
+    $("save-status").textContent = "That shortcut already has a remap";
+    return;
+  }
+  patch({ remaps: { ...(config.remaps ?? {}), [source]: targetKey } });
+  sourceKey = null;
+  targetKey = null;
+  keyboardChoice = "source";
+  renderKeyboard();
+  renderBuilder();
 });
 
-$("popup-anchor").addEventListener("click", (event) => {
-  const button = event.target.closest("button");
-  if (!button) return;
-  patch({ popup_anchor: button.dataset.value });
-  renderGeneral();
-});
-
-$("add-mapping").addEventListener("click", async () => {
-  const trigger = await captureKey("It becomes the trigger key");
-  if (!trigger || config.mapping[trigger]) return;
-  const target = await captureKey(`First key on the ${prettyKey(trigger)} wheel`);
-  if (!target) return;
-  patch({ mapping: { ...config.mapping, [trigger]: [target] } }, { rerender: true });
-  renderMappings();
-});
-
+$("enabled").addEventListener("change", (event) => patch({ enabled: event.target.checked }));
+$("startup").addEventListener("change", (event) => patch({ startup: event.target.checked }));
 $("close-window").addEventListener("click", () => getCurrentWindow().close());
 $("quit").addEventListener("click", () => invoke("quit"));
 
 listen("torch://config", ({ payload }) => {
-  const mappingChanged = JSON.stringify(payload.mapping) !== JSON.stringify(config?.mapping);
+  if (configRevision !== savedRevision) return;
   config = payload;
-  applyTheme(config);
-  renderGeneral();
-  if (mappingChanged) renderMappings();
-  renderPreview();
+  renderStatus();
+  renderRemaps();
 });
 
-watchSystemTheme(() => config);
-
+renderModifiers();
+renderKeyboard();
 invoke("get_config").then((loaded) => {
   config = loaded;
-  renderAll();
+  config.remaps ??= {};
+  renderStatus();
+  renderRemaps();
 });
+
