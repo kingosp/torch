@@ -5,7 +5,7 @@
 //! channel, so the OS input thread is never blocked by the UI, by disk I/O or
 //! by the Tauri event loop.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, OnceLock};
@@ -18,6 +18,7 @@ use crate::config::Config;
 /// Stamped into every synthetic event so the hook can ignore its own output and
 /// never trigger itself recursively.
 pub const TORCH_SIGNATURE: usize = 0x544f_5243; // "TORC"
+const MOD_SHIFT: u8 = 1;
 
 /// What the popup UI needs to know about. Delivered on a worker thread, never
 /// from inside the hook callback.
@@ -42,6 +43,8 @@ enum Action {
     Tap(u32),
     /// Type one of the mapped keys.
     Send(String),
+    /// Emit a replacement after briefly releasing the matched modifiers.
+    Remap { name: String, modifiers: Vec<u32> },
     Notify(HookEvent),
 }
 
@@ -64,6 +67,9 @@ pub struct Listener {
     hold_ms: AtomicU64,
     instant_passthrough: AtomicBool,
     mapping: Mutex<HashMap<u32, (String, Vec<String>)>>,
+    remaps: Mutex<HashMap<(u8, u32), String>>,
+    held_modifiers: Mutex<HashSet<u32>>,
+    swallowed_keys: Mutex<HashSet<u32>>,
     press: Mutex<Option<Press>>,
     session: Mutex<Option<Session>>,
     tx: Sender<Action>,
@@ -92,6 +98,9 @@ impl Listener {
             hold_ms: AtomicU64::new(2000),
             instant_passthrough: AtomicBool::new(false),
             mapping: Mutex::new(HashMap::new()),
+            remaps: Mutex::new(HashMap::new()),
+            held_modifiers: Mutex::new(HashSet::new()),
+            swallowed_keys: Mutex::new(HashSet::new()),
             press: Mutex::new(None),
             session: Mutex::new(None),
             tx,
@@ -105,6 +114,7 @@ impl Listener {
                     match action {
                         Action::Tap(vk) => keys::tap_vk(vk),
                         Action::Send(name) => keys::send_named(&name),
+                        Action::Remap { name, modifiers } => keys::send_remap(&name, &modifiers),
                         Action::Notify(event) => on_event(event),
                     }
                 }
@@ -130,13 +140,22 @@ impl Listener {
         self.instant_passthrough
             .store(config.instant_passthrough, Ordering::Relaxed);
 
-        let mut mapping = HashMap::with_capacity(config.mapping.len());
-        for (trigger, targets) in &config.mapping {
-            if let Some(vk) = keys::vk_from_name(trigger) {
-                mapping.insert(vk, (trigger.clone(), targets.clone()));
+        // The former radial mapping is intentionally disabled: Torch now
+        // emits instant modifier chords and has no hold gesture.
+        self.mapping.lock().clear();
+        let mut remaps = HashMap::with_capacity(config.remaps.len());
+        for (source, target) in &config.remaps {
+            let (modifiers, key) = keys::parse_chord(source);
+            let Some(key) = key else { continue };
+            let Some(vk) = keys::vk_from_name(&key) else { continue };
+            let mask = modifiers.iter().fold(0u8, |mask, vk| mask | modifier_bit(*vk));
+            if mask != 0 {
+                remaps.insert((mask, vk), target.clone());
             }
         }
-        *self.mapping.lock() = mapping;
+        *self.remaps.lock() = remaps;
+        self.held_modifiers.lock().clear();
+        self.swallowed_keys.lock().clear();
         self.cancel();
     }
 
@@ -238,6 +257,47 @@ impl Listener {
             return false;
         }
 
+        // Keep a tiny physical modifier state so chord matches are evaluated
+        // inside the low-level hook, before the source key reaches the app.
+        if modifier_bit(vk) != 0 {
+            let mut held = self.held_modifiers.lock();
+            if down { held.insert(vk); } else { held.remove(&vk); }
+            return false;
+        }
+        if !down && self.swallowed_keys.lock().remove(&vk) {
+            return true;
+        }
+        if down {
+            let held = self.held_modifiers.lock();
+            let mask = held.iter().fold(0u8, |mask, key| mask | modifier_bit(*key));
+            let remaps = self.remaps.lock();
+            // Prefer an explicitly configured chord. If Shift is the only
+            // extra modifier, let it modify the replacement (Alt+Q -> 1 thus
+            // types ! when the user presses Alt+Shift+Q).
+            let matched = remaps
+                .get(&(mask, vk))
+                .cloned()
+                .map(|name| (name, false))
+                .or_else(|| {
+                    (mask & MOD_SHIFT != 0)
+                        .then(|| remaps.get(&(mask & !MOD_SHIFT, vk)).cloned())
+                        .flatten()
+                        .map(|name| (name, true))
+                });
+            if let Some((name, preserve_shift)) = matched {
+                self.swallowed_keys.lock().insert(vk);
+                let modifiers = held
+                    .iter()
+                    .copied()
+                    .filter(|key| !preserve_shift || modifier_bit(*key) != MOD_SHIFT)
+                    .collect();
+                drop(remaps);
+                drop(held);
+                self.push(Action::Remap { name, modifiers });
+                return true;
+            }
+        }
+
         if let Some(session_vk) = self.session.lock().as_ref().map(|s| s.vk) {
             return self.handle_key_with_popup(vk, down, session_vk);
         }
@@ -320,6 +380,18 @@ impl Listener {
                 false
             }
         }
+    }
+}
+
+/// Ctrl, Alt, Shift and Windows modifier bits; side-specific VKs collapse to
+/// one logical modifier so left and right variants both work.
+fn modifier_bit(vk: u32) -> u8 {
+    match vk {
+        0x10 | 0xA0 | 0xA1 => 1, // Shift
+        0x11 | 0xA2 | 0xA3 => 2, // Ctrl
+        0x12 | 0xA4 | 0xA5 => 4, // Alt
+        0x5B | 0x5C => 8,        // Windows
+        _ => 0,
     }
 }
 
@@ -492,11 +564,24 @@ pub mod keys {
         }
     }
 
+    #[cfg(windows)]
+    pub fn send_remap(name: &str, source_modifiers: &[u32]) {
+        for modifier in source_modifiers.iter().rev() {
+            super::platform::send_vk(*modifier, false);
+        }
+        send_named(name);
+        for modifier in source_modifiers {
+            super::platform::send_vk(*modifier, true);
+        }
+    }
+
     #[cfg(not(windows))]
     pub fn tap_vk(_vk: u32) {}
 
     #[cfg(not(windows))]
     pub fn send_named(_name: &str) {}
+    #[cfg(not(windows))]
+    pub fn send_remap(_name: &str, _source_modifiers: &[u32]) {}
 }
 
 // ---------------------------------------------------------------------------

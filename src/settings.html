@@ -10,167 +10,35 @@
   <body class="settings-body">
     <div class="window">
       <header class="titlebar" data-tauri-drag-region>
-        <div class="brand" data-tauri-drag-region>
-          <span class="flame" aria-hidden="true"></span>
-          <span class="brand-name" data-tauri-drag-region>Torch</span>
-          <span class="brand-status" id="status-pill">Active</span>
-        </div>
-        <button class="icon-button" id="close-window" title="Close" aria-label="Close">
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M4 4l8 8M12 4l-8 8" />
-          </svg>
-        </button>
+        <div class="brand" data-tauri-drag-region><span class="flame" aria-hidden="true"></span><span class="brand-name">Torch</span><span class="brand-status" id="status-pill">Active</span></div>
+        <button class="icon-button" id="close-window" title="Close settings" aria-label="Close">×</button>
       </header>
-
-      <main class="content">
-        <section class="panel">
-          <h2>General</h2>
-
-          <div class="row">
-            <div class="row-text">
-              <span class="row-title">Enable Torch</span>
-              <span class="row-sub">Pause the keyboard hook without quitting</span>
-            </div>
-            <label class="switch">
-              <input type="checkbox" id="enabled" />
-              <span class="track"><span class="thumb"></span></span>
-            </label>
-          </div>
-
-          <div class="row">
-            <div class="row-text">
-              <span class="row-title">Start with Windows</span>
-              <span class="row-sub">Registers Torch under HKCU\...\CurrentVersion\Run</span>
-            </div>
-            <label class="switch">
-              <input type="checkbox" id="startup" />
-              <span class="track"><span class="thumb"></span></span>
-            </label>
-          </div>
-
-          <div class="row column">
-            <div class="row-text">
-              <span class="row-title">Hold time <em id="hold-time-value">2.00s</em></span>
-              <span class="row-sub">How long a trigger key must be held before the wheel opens</span>
-            </div>
-            <input type="range" id="hold-time" min="1" max="3" step="0.05" />
-          </div>
-
-          <div class="row">
-            <div class="row-text">
-              <span class="row-title">Popup position</span>
-              <span class="row-sub">Where the radial selector appears</span>
-            </div>
-            <div class="segmented" id="popup-anchor">
-              <button type="button" data-value="cursor" class="active">Cursor</button>
-              <button type="button" data-value="center">Screen center</button>
-            </div>
-          </div>
-
-          <div class="row">
-            <div class="row-text">
-              <span class="row-title">Instant pass-through</span>
-              <span class="row-sub">
-                Send trigger keys the moment they go down instead of on release
-              </span>
-            </div>
-            <label class="switch">
-              <input type="checkbox" id="instant" />
-              <span class="track"><span class="thumb"></span></span>
-            </label>
-          </div>
+      <main class="content instant-content">
+        <section class="panel hero-panel">
+          <div><p class="eyebrow">INSTANT KEY REMAP</p><h1>Give every key a backup.</h1><p class="hero-copy">Choose a modifier shortcut and send a replacement key immediately. Torch runs quietly in the system tray.</p></div>
+          <label class="switch"><input type="checkbox" id="enabled" /><span class="track"><span class="thumb"></span></span></label>
         </section>
-
         <section class="panel">
-          <div class="panel-head">
-            <h2>Key mappings</h2>
-            <button class="ghost-button" id="add-mapping">+ Add trigger</button>
+          <div class="panel-head"><div><h2>Create a remap</h2><p class="panel-hint">For example, <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + a working key can type the key your keyboard is missing. Hold Shift with an existing shortcut to send the shifted replacement; an explicit Shift remap takes priority.</p></div></div>
+          <div class="builder-grid">
+            <div class="builder-card"><span class="step-label">1 · MODIFIERS</span><div class="modifier-list" id="modifiers"></div><span class="field-help">Choose one or more</span></div>
+            <div class="builder-card"><span class="step-label">2 · WORKING KEY</span><div class="picked-key" id="source-picked">Choose a key below</div><span class="field-help">Pressing this with your modifier(s) starts the remap</span></div>
+            <div class="builder-arrow" aria-hidden="true">→</div>
+            <div class="builder-card"><span class="step-label">3 · REPLACEMENT</span><div class="picked-key" id="target-picked">Choose a key below</div><span class="field-help">Torch sends this key to the active app</span></div>
           </div>
-          <p class="panel-hint">
-            Hold a trigger key to open its wheel. Arrow keys move the highlight, releasing the
-            trigger commits it.
-          </p>
-          <div class="mappings" id="mappings"></div>
+          <div class="keyboard-wrap"><div class="keyboard-heading"><span>ON-SCREEN KEYBOARD</span><span id="keyboard-mode">Select the working key, then the replacement</span></div><div class="keyboard" id="keyboard" aria-label="Choose source or replacement keys"></div></div>
+          <div class="builder-actions"><span id="save-status">Changes save automatically</span><button class="primary-button" id="add-remap" disabled>Add remap</button></div>
         </section>
-
         <section class="panel">
-          <h2>Appearance</h2>
-          <div class="row">
-            <div class="row-text">
-              <span class="row-title">Theme</span>
-              <span class="row-sub">Auto follows the Windows light / dark setting</span>
-            </div>
-            <div class="segmented" id="theme">
-              <button type="button" data-value="auto">Auto</button>
-              <button type="button" data-value="dark">Dark</button>
-              <button type="button" data-value="light">Light</button>
-              <button type="button" data-value="custom">Custom</button>
-            </div>
-          </div>
-
-          <div class="theme-grid">
-            <label class="color">
-              <span>Accent</span>
-              <input type="color" id="accent" />
-            </label>
-            <label class="color" data-custom-only>
-              <span>Background</span>
-              <input type="color" id="bg" />
-            </label>
-            <label class="color" data-custom-only>
-              <span>Text</span>
-              <input type="color" id="text" />
-            </label>
-            <label class="color" data-custom-only>
-              <span>Highlight</span>
-              <input type="color" id="highlight" />
-            </label>
-          </div>
-
-          <div class="row column">
-            <div class="row-text">
-              <span class="row-title">Blur intensity <em id="blur-value">20px</em></span>
-              <span class="row-sub">Backdrop blur behind the glass panel</span>
-            </div>
-            <input type="range" id="blur" min="0" max="60" step="1" />
-          </div>
-
-          <div class="preview">
-            <span class="preview-label">Live preview</span>
-            <div class="preview-stage">
-              <div class="stage" id="stage">
-                <div class="glass" id="glass">
-                  <svg class="orbit" viewBox="0 0 460 460" aria-hidden="true">
-                    <circle class="orbit-track" cx="230" cy="230" r="132" />
-                    <circle class="orbit-progress" id="orbit-progress" cx="230" cy="230" r="132" />
-                  </svg>
-                  <div class="needle" id="needle"></div>
-                  <div class="core" id="core">
-                    <span class="core-key" id="core-key">S</span>
-                    <span class="core-hint" id="core-hint">release to pick</span>
-                  </div>
-                  <div class="items" id="items"></div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <div class="panel-head"><div><h2>Your remaps</h2><p class="panel-hint">The source key is swallowed only when the selected modifiers are held.</p></div><span class="count-pill" id="remap-count">0</span></div>
+          <div class="remap-list" id="remaps"></div>
         </section>
-
-        <footer class="footer">
-          <span id="config-path">Offline config: config.json</span>
+        <section class="panel preferences-panel">
+          <div><div><h2>Run at sign-in</h2><p class="panel-hint">Start Torch automatically when you sign in to Windows.</p></div><label class="switch"><input type="checkbox" id="startup" /><span class="track"><span class="thumb"></span></span></label></div>
           <button class="danger-button" id="quit">Quit Torch</button>
-        </footer>
+        </section>
       </main>
     </div>
-
-    <div class="capture-overlay" id="capture" hidden>
-      <div class="capture-card">
-        <span class="capture-title">Press any key</span>
-        <span class="capture-sub" id="capture-sub">It becomes the trigger key</span>
-        <button class="ghost-button" id="capture-cancel">Cancel</button>
-      </div>
-    </div>
-
     <script type="module" src="settings.js"></script>
   </body>
 </html>
