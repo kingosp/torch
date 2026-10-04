@@ -18,6 +18,7 @@ use crate::config::Config;
 /// Stamped into every synthetic event so the hook can ignore its own output and
 /// never trigger itself recursively.
 pub const TORCH_SIGNATURE: usize = 0x544f_5243; // "TORC"
+const MOD_SHIFT: u8 = 1;
 
 /// What the popup UI needs to know about. Delivered on a worker thread, never
 /// from inside the hook callback.
@@ -42,7 +43,7 @@ enum Action {
     Tap(u32),
     /// Type one of the mapped keys.
     Send(String),
-    /// Emit a replacement after briefly releasing the physical source modifiers.
+    /// Emit a replacement after briefly releasing the matched modifiers.
     Remap { name: String, modifiers: Vec<u32> },
     Notify(HookEvent),
 }
@@ -269,10 +270,28 @@ impl Listener {
         if down {
             let held = self.held_modifiers.lock();
             let mask = held.iter().fold(0u8, |mask, key| mask | modifier_bit(*key));
-            let remap = self.remaps.lock().get(&(mask, vk)).cloned();
-            if let Some(name) = remap {
+            let remaps = self.remaps.lock();
+            // Prefer an explicitly configured chord. If Shift is the only
+            // extra modifier, let it modify the replacement (Alt+Q -> 1 thus
+            // types ! when the user presses Alt+Shift+Q).
+            let matched = remaps
+                .get(&(mask, vk))
+                .cloned()
+                .map(|name| (name, false))
+                .or_else(|| {
+                    (mask & MOD_SHIFT != 0)
+                        .then(|| remaps.get(&(mask & !MOD_SHIFT, vk)).cloned())
+                        .flatten()
+                        .map(|name| (name, true))
+                });
+            if let Some((name, preserve_shift)) = matched {
                 self.swallowed_keys.lock().insert(vk);
-                let modifiers = held.iter().copied().collect();
+                let modifiers = held
+                    .iter()
+                    .copied()
+                    .filter(|key| !preserve_shift || modifier_bit(*key) != MOD_SHIFT)
+                    .collect();
+                drop(remaps);
                 drop(held);
                 self.push(Action::Remap { name, modifiers });
                 return true;
@@ -732,4 +751,3 @@ mod tests {
         assert_eq!(key.as_deref(), Some("t"));
     }
 }
-
